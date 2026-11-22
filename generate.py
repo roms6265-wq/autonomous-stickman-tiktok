@@ -1,12 +1,11 @@
 import os
 import requests
 import json
-from datetime import datetime
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 
 if not API_KEY:
-    raise ValueError("GEMINI_API_KEY fehlt!")
+    raise ValueError("GEMINI_API_KEY fehlt in GitHub Secrets!")
 
 url = (
     "https://generativelanguage.googleapis.com/v1beta/"
@@ -14,24 +13,20 @@ url = (
 )
 
 prompt = """
-Create one highly engaging English Stickman story for TikTok.
+Create an exciting English Stickman TikTok story.
 
 Requirements:
-- 105 to 115 spoken words.
 - Exactly 5 scenes.
-- A powerful hook in the first sentence.
-- A surprising twist at the end.
-- Each scene must contain a visual description.
-- Narration should be exciting and easy to understand.
+- 105 to 115 words total.
+- A powerful hook.
+- A surprising ending.
+- Each scene needs narration and visual description.
 
-Return ONLY valid JSON in this format:
+Return valid JSON only:
 {
   "title": "Story title",
   "scenes": [
-    {
-      "narration": "Spoken text",
-      "visual": "Stickman visual description"
-    }
+    {"narration": "Text", "visual": "Description"}
   ]
 }
 """
@@ -42,24 +37,30 @@ response = requests.post(
     json={
         "contents": [{
             "parts": [{"text": prompt}]
-        }]
+        }],
+        "generationConfig": {
+            "responseMimeType": "application/json"
+        }
     },
-    timeout=60
+    timeout=90
 )
 
-response.raise_for_status()
+if not response.ok:
+    raise RuntimeError(
+        f"Gemini API Fehler {response.status_code}: "
+        f"{response.text[:1500]}"
+    )
 
-result = response.json()
-text = result["candidates"][0]["content"]["parts"][0]["text"]
+data = response.json()
 
-text = text.strip()
-if text.startswith("```"):
-    text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+try:
+    answer = data["candidates"][0]["content"]["parts"][0]["text"]
+    story = json.loads(answer)
+except (KeyError, IndexError, json.JSONDecodeError) as error:
+    raise RuntimeError(f"KI-Antwort konnte nicht gelesen werden: {data}") from error
 
-story = json.loads(text)
-
-if len(story["scenes"]) != 5:
-    raise ValueError("Die Geschichte muss genau 5 Szenen haben.")
+if len(story.get("scenes", [])) != 5:
+    raise ValueError("Die Geschichte hat nicht genau 5 Szenen.")
 
 os.makedirs("output", exist_ok=True)
 
