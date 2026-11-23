@@ -33,10 +33,12 @@ Return valid JSON only:
 }
 """
 
-response = None
+data = None
 
-for attempt in range(3):
+for attempt in range(5):
     try:
+        print(f"Gemini Anfrage: Versuch {attempt + 1}/5")
+
         response = requests.post(
             url,
             params={"key": API_KEY},
@@ -48,52 +50,61 @@ for attempt in range(3):
                     "responseMimeType": "application/json"
                 }
             },
-            timeout=90
+            timeout=(20, 180)
         )
 
         if response.ok:
+            data = response.json()
             break
 
-        if response.status_code in [429, 500, 502, 503, 504]:
-            print(
-                f"Gemini Fehler {response.status_code}. "
-                f"Versuch {attempt + 1}/3"
-            )
-            time.sleep(10)
-        else:
+        if response.status_code not in [408, 429, 500, 502, 503, 504]:
             raise RuntimeError(
                 f"Gemini API Fehler {response.status_code}: "
                 f"{response.text[:1500]}"
             )
 
+        print(f"Gemini Fehler: {response.status_code}")
+
     except requests.RequestException as error:
         print(f"Verbindungsfehler: {error}")
-        if attempt == 2:
-            raise
-        time.sleep(10)
 
-if response is None or not response.ok:
+    if attempt < 4:
+        wait = min(15 * (2 ** attempt), 60)
+        print(f"Warte {wait} Sekunden...")
+        time.sleep(wait)
+
+if data is None:
     raise RuntimeError(
-        "Gemini ist nach 3 Versuchen nicht erreichbar: "
-        + (response.text[:1500] if response is not None else "Keine Antwort")
+        "Gemini konnte nach 5 Versuchen nicht antworten."
     )
-
-data = response.json()
 
 try:
     answer = data["candidates"][0]["content"]["parts"][0]["text"]
     story = json.loads(answer)
-except (KeyError, IndexError, json.JSONDecodeError) as error:
+
+except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
     raise RuntimeError(
         f"KI-Antwort konnte nicht gelesen werden: {data}"
     ) from error
 
-if len(story.get("scenes", [])) != 5:
+if not isinstance(story, dict):
+    raise ValueError("Die Geschichte ist kein gültiges JSON-Objekt.")
+
+scenes = story.get("scenes")
+
+if not isinstance(scenes, list) or len(scenes) != 5:
     raise ValueError("Die Geschichte hat nicht genau 5 Szenen.")
+
+for i, scene in enumerate(scenes):
+    if not isinstance(scene, dict):
+        raise ValueError(f"Szene {i + 1} ist ungültig.")
+
+    if not scene.get("narration") or not scene.get("visual"):
+        raise ValueError(f"Szene {i + 1} ist unvollständig.")
 
 os.makedirs("output", exist_ok=True)
 
 with open("output/story.json", "w", encoding="utf-8") as file:
     json.dump(story, file, ensure_ascii=False, indent=2)
 
-print("Geschichte erfolgreich erstellt:", story["title"])
+print("Geschichte erfolgreich erstellt:", story.get("title"))
